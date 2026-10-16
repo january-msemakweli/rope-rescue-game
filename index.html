@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Rope Rescue — Cut the Rope, Save the Tiles</title>
+<meta name="description" content="A physics puzzle: slash the ropes in the right order to drop the tile mascots safely to the grass — and keep the gorillas hanging.">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:#10241a; color:#f2f7f2;
+    display:flex; flex-direction:column; align-items:center; min-height:100vh; padding:10px 8px 18px; }
+  header { text-align:center; max-width:520px; }
+  h1 { font-size:22px; }
+  #objective { font-size:14.5px; font-weight:600; color:#ffd94d; margin-top:4px; }
+  #hud { display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap; margin:10px 0 8px; width:100%; max-width:520px; }
+  .pill { background:#1d3a29; border:1px solid #38634a; border-radius:999px; padding:5px 12px; font-size:13.5px; font-weight:700; }
+  button { background:#e4572e; color:#fff; border:none; border-radius:10px; padding:9px 14px; font-size:14px; font-weight:700; cursor:pointer; }
+  button.secondary { background:#1d3a29; border:1px solid #38634a; }
+  button:active { transform:scale(.97); }
+  #board { border-radius:18px; width:min(96vw,500px); aspect-ratio:100/118; touch-action:none; cursor:crosshair; box-shadow:0 10px 30px rgba(0,0,0,.45); }
+  #status { margin-top:10px; font-size:15px; font-weight:600; text-align:center; min-height:22px; max-width:500px; }
+  #status.lose { color:#ff7b72; } #status.win { color:#7ee787; }
+  #levelBar { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top:10px; max-width:500px; }
+  .lvl { width:38px; height:38px; border-radius:50%; border:2px solid #38634a; background:#1d3a29; color:#f2f7f2; font-weight:800; font-size:15px; cursor:pointer; padding:0; }
+  .lvl.current { border-color:#ffd94d; background:#e4572e; }
+  .lvl.done { background:#1f7a3d; border-color:#2ea043; }
+  .lvl.locked { opacity:.35; cursor:not-allowed; }
+  footer { margin-top:14px; font-size:12.5px; color:#9db8a6; text-align:center; max-width:500px; line-height:1.5; }
+  #overlay { position:fixed; inset:0; background:rgba(5,15,8,.72); display:none; align-items:center; justify-content:center; z-index:10; padding:16px; }
+  #overlay.show { display:flex; }
+  .card { background:#173325; border:1px solid #38634a; border-radius:18px; padding:26px 22px; text-align:center; max-width:360px; width:100%; }
+  .card .big { font-size:46px; }
+  .card h2 { margin:8px 0 6px; font-size:22px; }
+  .card p { color:#cfe3d4; font-size:14.5px; margin-bottom:16px; }
+  .card .row { display:flex; gap:8px; justify-content:center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>✂️ Rope Rescue</h1>
+  <div id="objective">Cut the ropes correctly — save the tiles, keep the gorillas hanging.</div>
+</header>
+
+<div id="hud">
+  <span class="pill" id="lvlName">Level 1</span>
+  <span class="pill">IQ = <span id="iq">85</span></span>
+  <span class="pill">Saved: <span id="saved">0/1</span></span>
+  <button class="secondary" id="hintBtn">💡 Hint</button>
+  <button class="secondary" id="restartBtn">↺ Restart</button>
+</div>
+
+<canvas id="board" width="1000" height="1180"></canvas>
+<div id="status">Swipe across a rope to cut it.</div>
+<div id="levelBar"></div>
+
+<footer>
+  How to play: swipe (or tap) a rope to cut it. A tile mascot that drops a short way lands
+  safely on the grass — one that falls too far gets knocked out. If a gorilla reaches the
+  ground, it's free and the level is lost. Order matters: a hanging friend can lower another one.
+</footer>
+
+<div id="overlay"><div class="card">
+  <div class="big" id="ovEmoji">🎉</div>
+  <h2 id="ovTitle">Rescued!</h2>
+  <p id="ovText"></p>
+  <div class="row">
+    <button class="secondary" id="ovRetry">↺ Replay</button>
+    <button id="ovNext">Next level →</button>
+  </div>
+</div></div>
+
+<script>
+"use strict";
+/* ================= Levels =================
+   Board 1000x1180. Branch line y=170, grass top y=1040.
+   chars: [x, y, type]  type: 'tile' (save it) or 'gorilla' (keep it hanging)
+   ropes: endpoints are either ['a', x, y] (fixed anchor on the branch)
+          or ['c', charIndex] (tied to another character).
+   Rope length = initial distance between its endpoints (taut at start). */
+const LEVELS = [
+  { name:"Level 1 · First Cut", iq:85,
+    hint:"Cut the rope above the tile. Do NOT cut the gorilla's rope.",
+    chars:[ [430,712,'tile'], [770,552,'gorilla'] ],
+    ropes:[ [['a',430,170],['c',0]], [['a',770,170],['c',1]] ] },
+  { name:"Level 2 · Two Friends", iq:82,
+    hint:"The tiles are tied to the gorilla. Free the tiles from him first, then drop them.",
+    chars:[ [275,712,'tile'], [500,562,'gorilla'], [725,712,'tile'] ],
+    ropes:[ [['a',275,170],['c',0]], [['a',500,170],['c',1]], [['a',725,170],['c',2]],
+            [['c',0],['c',1]], [['c',1],['c',2]] ] },
+  { name:"Level 3 · The Chain", iq:84,
+    hint:"Three tiles on one chain. One good cut at the very top brings them all down gently.",
+    chars:[ [380,432,'tile'], [380,668,'tile'], [380,892,'tile'], [790,572,'gorilla'] ],
+    ropes:[ [['a',380,170],['c',0]], [['c',0],['c',1]], [['c',1],['c',2]],
+            [['a',790,170],['c',3]] ] },
+  { name:"Level 4 · Gorilla Guard", iq:86,
+    hint:"Each tile is tied to the gorilla. Cut a tile's branch rope and it dangles from him — then cut it free for a short, safe drop.",
+    chars:[ [262,738,'tile'], [500,548,'gorilla'], [738,738,'tile'] ],
+    ropes:[ [['a',262,170],['c',0]], [['a',500,170],['c',1]], [['a',738,170],['c',2]],
+            [['c',0],['c',1]], [['c',1],['c',2]] ] },
+  { name:"Level 5 · Grand Rescue", iq:80,
+    hint:"Left: a two-tile chain — cut at the top. Middle tile: drop it straight down. Right tile: dangle it from the gorilla, then cut it free.",
+    chars:[ [215,478,'tile'], [215,742,'tile'], [472,768,'tile'], [688,548,'gorilla'], [842,738,'tile'] ],
+    ropes:[ [['a',215,170],['c',0]], [['c',0],['c',1]],
+            [['a',472,170],['c',2]],
+            [['a',688,170],['c',3]],
+            [['a',842,170],['c',4]], [['c',3],['c',4]] ] },
+];
+const W=1000, H=1180, GROUND_Y=1040, BRANCH_Y=170;
+
+/* ================= Physics core (DOM-free) ================= */
+/*PHYS START*/
+const PHYS = (() => {
+  const GRAV = 0.35, DAMP = 0.995, SAFE_V = 15.5, ITERS = 26;
+  const RADIUS = { tile:52, gorilla:64 };
+  function endpointPos(world, ep){
+    if (ep[0]==='a') return [ep[1], ep[2]];
+    const c = world.chars[ep[1]]; return [c.x, c.y];
+  }
+  function createWorld(level){
+    const chars = level.chars.map(([x,y,type],i)=>({
+      id:i, type, x, y, px:x, py:y, r:RADIUS[type],
+      startY:y, isStatic:false, saved:false, out:false,
+      dropped:false, restFrames:0, touching:false
+    }));
+    const world = { chars, ropes:[], frame:0, result:null, failReason:'', savedCount:0,
+                    tileTotal: chars.filter(c=>c.type==='tile').length };
+    world.ropes = level.ropes.map(([e1,e2])=>{
+      const p1 = e1[0]==='a' ? [e1[1],e1[2]] : [chars[e1[1]].x, chars[e1[1]].y];
+      const p2 = e2[0]==='a' ? [e2[1],e2[2]] : [chars[e2[1]].x, chars[e2[1]].y];
+      return { e1, e2, len: Math.hypot(p2[0]-p1[0], p2[1]-p1[1]), cut:false };
+    });
+    return world;
+  }
+  function charHasRope(world, c){
+    return world.ropes.some(r=>!r.cut && ((r.e1[0]==='c'&&r.e1[1]===c.id)||(r.e2[0]==='c'&&r.e2[1]===c.id)));
+  }
+  function step(world){
+    if (world.result) return;
+    world.frame++;
+    // integrate
+    for (const c of world.chars){
+      if (c.isStatic || c.out) continue;
+      const vx = (c.x-c.px)*DAMP, vy = (c.y-c.py)*DAMP;
+      c.px=c.x; c.py=c.y;
+      c.x += vx; c.y += vy + GRAV;
+      c._vx = vx; c._vy = vy + GRAV; // velocity this frame, pre-constraint (for impact)
+      if (!charHasRope(world,c) || c.y > c.startY + 40) c.dropped = true;
+    }
+    // constraints
+    for (let it=0; it<ITERS; it++){
+      for (const r of world.ropes){
+        if (r.cut) continue;
+        const dyn = [r.e1, r.e2].map(ep => ep[0]==='c' ? world.chars[ep[1]] : null);
+        let [x1,y1] = endpointPos(world, r.e1);
+        let [x2,y2] = endpointPos(world, r.e2);
+        let dx = x2-x1, dy = y2-y1;
+        let d = Math.hypot(dx,dy) || 0.0001;
+        if (d <= r.len) continue; // ropes only pull, never push
+        const diff = (d - r.len)/d;
+        const w1 = dyn[0] && !dyn[0].isStatic && !dyn[0].out ? 1 : 0;
+        const w2 = dyn[1] && !dyn[1].isStatic && !dyn[1].out ? 1 : 0;
+        const ws = w1+w2; if (!ws) continue;
+        if (w1){ dyn[0].x += dx*diff*(w1/ws); dyn[0].y += dy*diff*(w1/ws); }
+        if (w2){ dyn[1].x -= dx*diff*(w2/ws); dyn[1].y -= dy*diff*(w2/ws); }
+      }
+      // char-char collision (simple push-apart)
+      for (let i=0;i<world.chars.length;i++) for (let j=i+1;j<world.chars.length;j++){
+        const a=world.chars[i], b=world.chars[j];
+        if (a.out||b.out) continue;
+        const dx=b.x-a.x, dy=b.y-a.y, min=a.r+b.r-6;
+        const d=Math.hypot(dx,dy)||0.0001;
+        if (d<min){
+          const push=(min-d)/d, wa=a.isStatic?0:1, wb=b.isStatic?0:1, ws=wa+wb;
+          if (!ws) continue;
+          a.x -= dx*push*(wa/ws); a.y -= dy*push*(wa/ws);
+          b.x += dx*push*(wb/ws); b.y += dy*push*(wb/ws);
+        }
+      }
+      // ground + walls
+      for (const c of world.chars){
+        if (c.out) continue;
+        if (c.x < c.r) c.x = c.r;
+        if (c.x > W - c.r) c.x = W - c.r;
+        const restY = GROUND_Y - c.r;
+        if (c.y > restY) c.y = restY;
+      }
+    }
+    // ground contact outcomes + rest detection
+    for (const c of world.chars){
+      if (c.out || c.saved) continue;
+      const restY = GROUND_Y - c.r;
+      const onGround = c.y >= restY - 0.5;
+      const speed = Math.hypot(c.x-c.px, c.y-c.py);
+      if (onGround && !c.touching){
+        // first contact this fall: use the pre-constraint velocity captured at integration
+        const v = Math.hypot(c._vx||0, c._vy||0);
+        if (c.type==='gorilla'){
+          world.result='fail'; world.failReason='The gorilla reached the ground and got free!';
+          return;
+        }
+        if (c.dropped && v > SAFE_V){
+          c.out = true;
+          world.result='fail'; world.failReason='A tile fell too far and got knocked out!';
+          return;
+        }
+      }
+      c.touching = onGround;
+      if (c.type==='tile' && c.dropped){
+        if (speed < 1.4 && (onGround || world.chars.some(o=>o!==c && o.saved && Math.hypot(o.x-c.x,o.y-c.y) < c.r+o.r+4))){
+          c.restFrames++;
+          if (c.restFrames > 22){
+            c.saved = true; c.isStatic = true; world.savedCount++;
+          }
+        } else c.restFrames = 0;
+      }
+    }
+    if (world.savedCount >= world.tileTotal){
+      world.result='win';
+    }
+  }
+  function cutRope(world, idx){ const r=world.ropes[idx]; if (r && !r.cut){ r.cut=true; return true; } return false; }
+  return { createWorld, step, cutRope, endpointPos, SAFE_V };
+})();
+/*PHYS END*/
+
+/* ================= Game UI ================= */
+const canvas = document.getElementById("board");
+const ctx = canvas.getContext("2d");
+let lvlIdx = 0, world = null, iq = 85, over = false, slash = [];
+let unlocked = parseInt(localStorage.getItem("rr_unlocked")||"0",10);
+
+function loadLevel(i){
+  lvlIdx = i;
+  world = PHYS.createWorld(LEVELS[i]);
+  iq = LEVELS[i].iq; over = false; slash = [];
+  document.getElementById("lvlName").textContent = LEVELS[i].name;
+  document.getElementById("iq").textContent = iq;
+  updateSaved();
+  setStatus("Swipe across a rope to cut it.", "");
+  hideOverlay(); renderLevelBar();
+}
+function updateSaved(){ document.getElementById("saved").textContent = world.savedCount + "/" + world.tileTotal; }
+function setStatus(t, cls){ const s=document.getElementById("status"); s.textContent=t; s.className=cls||""; }
+function hideOverlay(){ document.getElementById("overlay").classList.remove("show"); }
+
+function ropeEndpoints(r){
+  return [PHYS.endpointPos(world, r.e1), PHYS.endpointPos(world, r.e2)];
+}
+function draw(){
+  // sky
+  const sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,"#8fd3f4"); sky.addColorStop(0.75,"#cdeffd"); sky.addColorStop(0.751,"#8fd35a"); sky.addColorStop(1,"#6db83f");
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
+  // clouds
+  ctx.fillStyle = "rgba(255,255,255,.85)";
+  for (const [cx,cy,s] of [[180,320,1],[560,250,0.8],[830,360,1.1],[330,470,0.7],[720,520,0.75]]){
+    ctx.beginPath();
+    ctx.ellipse(cx,cy,70*s,26*s,0,0,7); ctx.ellipse(cx+45*s,cy+6*s,50*s,20*s,0,0,7); ctx.ellipse(cx-48*s,cy+7*s,46*s,18*s,0,0,7);
+    ctx.fill();
+  }
+  // grass detail
+  ctx.fillStyle = "#5da233";
+  ctx.beginPath(); ctx.ellipse(240,GROUND_Y+90,420,110,0,Math.PI,7); ctx.ellipse(790,GROUND_Y+100,460,120,0,Math.PI,7); ctx.fill();
+  // branch
+  ctx.strokeStyle = "#7a4a21"; ctx.lineWidth = 30; ctx.lineCap="round";
+  ctx.beginPath(); ctx.moveTo(-10,BRANCH_Y); ctx.quadraticCurveTo(W/2,BRANCH_Y-26,W+10,BRANCH_Y); ctx.stroke();
+  ctx.strokeStyle = "#96602c"; ctx.lineWidth = 10;
+  ctx.beginPath(); ctx.moveTo(-10,BRANCH_Y-8); ctx.quadraticCurveTo(W/2,BRANCH_Y-34,W+10,BRANCH_Y-8); ctx.stroke();
+  // leaves
+  ctx.font = "34px serif"; ctx.textAlign="center";
+  for (let x=30;x<W;x+=85) ctx.fillText("🌿", x, BRANCH_Y-22);
+  // ropes
+  world.ropes.forEach((r)=>{
+    if (r.cut) return;
+    const [[x1,y1],[x2,y2]] = ropeEndpoints(r);
+    ctx.strokeStyle = "#a4712f"; ctx.lineWidth = 7;
+    ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+    ctx.fillStyle = "#7a4a21";
+    ctx.beginPath(); ctx.arc(x1,y1,6,0,7); ctx.fill();
+    ctx.beginPath(); ctx.arc(x2,y2,6,0,7); ctx.fill();
+  });
+  // slash trail
+  if (slash.length>1){
+    ctx.strokeStyle = "rgba(255,60,40,.9)"; ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(slash[0][0], slash[0][1]);
+    for (const p of slash) ctx.lineTo(p[0],p[1]);
+    ctx.stroke();
+  }
+  // characters
+  for (const c of world.chars) drawChar(c);
+}
+function drawChar(c){
+  if (c.type==='gorilla'){
+    ctx.font = "118px serif"; ctx.textAlign="center";
+    ctx.fillText(c.out ? "😵" : "🦍", c.x, c.y + 44);
+    return;
+  }
+  // tile mascot: white rounded tile, green top, blue overalls bottom
+  const w=84, h=104, x=c.x-w/2, y=c.y-h/2;
+  ctx.save();
+  if (c.out){ ctx.translate(c.x,c.y); ctx.rotate(0.5); ctx.translate(-c.x,-c.y); }
+  ctx.fillStyle = "#ffffff";
+  ctx.strokeStyle = "#2e7d4f"; ctx.lineWidth = 6;
+  roundRectPath(x,y,w,h,16); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#2e9e5b"; roundRectPath(x,y,w,26,14); ctx.fill();
+  ctx.fillStyle = "#2f6fed"; roundRectPath(x,y+h-30,w,30,14); ctx.fill();
+  ctx.fillStyle = "#fff"; roundRectPath(x,y+h-30,w,10,5); ctx.fill();
+  // face
+  ctx.fillStyle = "#222";
+  if (c.out){
+    ctx.font = "bold 26px system-ui"; ctx.textAlign="center";
+    ctx.fillText("✕ ✕", c.x, y+58);
+    ctx.beginPath(); ctx.arc(c.x, y+82, 9, Math.PI, 7); ctx.strokeStyle="#222"; ctx.lineWidth=3; ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.arc(c.x-16, y+54, 6, 0, 7); ctx.arc(c.x+16, y+54, 6, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#222"; ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    if (c.saved) ctx.arc(c.x, y+66, 13, 0.15*Math.PI, 0.85*Math.PI); // smile
+    else ctx.arc(c.x, y+82, 10, 1.15*Math.PI, 1.85*Math.PI); // worried frown
+    ctx.stroke();
+    if (c.saved){ ctx.font="30px serif"; ctx.fillText("⭐", c.x+34, y+16); }
+  }
+  ctx.restore();
+}
+function roundRectPath(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+
+/* ---- main loop ---- */
+let lastSaved = 0;
+(function loop(){
+  if (world){
+    PHYS.step(world);
+    if (world.savedCount !== lastSaved){
+      iq += 13 * (world.savedCount - lastSaved);
+      lastSaved = world.savedCount;
+      document.getElementById("iq").textContent = iq;
+      updateSaved();
+      if (!world.result) setStatus("Saved! " + world.savedCount + " of " + world.tileTotal + " tiles safe.", "win");
+    }
+    if (world.result && !over){
+      over = true;
+      if (world.result==='win') endGame(true, "All tiles rescued! Final IQ = " + iq + ".");
+      else { iq = Math.max(40, iq - 22); document.getElementById("iq").textContent = iq; endGame(false, world.failReason + " IQ dropped to " + iq + "."); }
+    }
+    draw();
+  }
+  requestAnimationFrame(loop);
+})();
+
+function endGame(won, text){
+  setStatus(won ? "🎉 " + text : "💥 " + text, won ? "win" : "lose");
+  if (won){
+    localStorage.setItem("rr_done_"+lvlIdx, "1");
+    if (lvlIdx >= unlocked && lvlIdx < LEVELS.length-1){
+      unlocked = lvlIdx+1; localStorage.setItem("rr_unlocked", String(unlocked));
+    }
+  }
+  renderLevelBar();
+  setTimeout(()=>{
+    document.getElementById("ovEmoji").textContent = won ? "🎉" : "💥";
+    document.getElementById("ovTitle").textContent = won ? "Rescued!" : "Oh no!";
+    document.getElementById("ovText").textContent = text;
+    document.getElementById("ovNext").style.display = (won && lvlIdx<LEVELS.length-1) ? "" : "none";
+    document.getElementById("overlay").classList.add("show");
+  }, 600);
+}
+
+/* ---- cutting input ---- */
+function segInt(p1,p2,p3,p4){
+  const d = (p2[0]-p1[0])*(p4[1]-p3[1]) - (p2[1]-p1[1])*(p4[0]-p3[0]);
+  if (!d) return false;
+  const t = ((p3[0]-p1[0])*(p4[1]-p3[1]) - (p3[1]-p1[1])*(p4[0]-p3[0]))/d;
+  const u = ((p3[0]-p1[0])*(p2[1]-p1[1]) - (p3[1]-p1[1])*(p2[0]-p1[0]))/d;
+  return t>=0 && t<=1 && u>=0 && u<=1;
+}
+function distToSeg(p, a, b){
+  const dx=b[0]-a[0], dy=b[1]-a[1], L2=dx*dx+dy*dy||1;
+  let t=((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L2; t=Math.max(0,Math.min(1,t));
+  return Math.hypot(p[0]-(a[0]+t*dx), p[1]-(a[1]+t*dy));
+}
+function tryCut(from, to){
+  if (over || !world || world.result) return;
+  world.ropes.forEach((r, idx)=>{
+    if (r.cut) return;
+    const [a,b] = ropeEndpoints(r);
+    if (segInt(from,to,a,b) || distToSeg(from,a,b) < 20 || distToSeg(to,a,b) < 20){
+      PHYS.cutRope(world, idx);
+    }
+  });
+}
+let dragging=false, lastPt=null;
+function canvasPt(e){
+  const r=canvas.getBoundingClientRect();
+  return [ (e.clientX-r.left)/r.width*W, (e.clientY-r.top)/r.height*H ];
+}
+canvas.addEventListener("pointerdown", e=>{
+  dragging=true; const p=canvasPt(e); lastPt=p; slash=[p];
+  tryCut([p[0]-14,p[1]-14],[p[0]+14,p[1]+14]); // a tap counts as a tiny slash
+  canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointermove", e=>{
+  if (!dragging) return;
+  const p=canvasPt(e);
+  if (lastPt && Math.hypot(p[0]-lastPt[0], p[1]-lastPt[1]) > 2){
+    tryCut(lastPt, p);
+    slash.push(p); if (slash.length>14) slash.shift();
+    lastPt=p;
+  }
+});
+function endDrag(){ dragging=false; lastPt=null; setTimeout(()=>slash=[],120); }
+canvas.addEventListener("pointerup", endDrag);
+canvas.addEventListener("pointercancel", endDrag);
+
+/* ---- UI buttons ---- */
+document.getElementById("restartBtn").onclick = ()=>{ lastSaved=0; loadLevel(lvlIdx); };
+document.getElementById("hintBtn").onclick = ()=>{ if (!over) setStatus("💡 " + LEVELS[lvlIdx].hint, ""); };
+document.getElementById("ovRetry").onclick = ()=>{ lastSaved=0; loadLevel(lvlIdx); };
+document.getElementById("ovNext").onclick = ()=>{ lastSaved=0; loadLevel(Math.min(lvlIdx+1, LEVELS.length-1)); };
+function renderLevelBar(){
+  const bar=document.getElementById("levelBar"); bar.innerHTML="";
+  LEVELS.forEach((L,i)=>{
+    const b=document.createElement("button");
+    b.className="lvl"+(i===lvlIdx?" current":"")+(localStorage.getItem("rr_done_"+i)?" done":"")+(i>unlocked?" locked":"");
+    b.textContent=i+1; b.title=L.name;
+    b.onclick=()=>{ if (i<=unlocked){ lastSaved=0; loadLevel(i); } };
+    bar.appendChild(b);
+  });
+}
+loadLevel(0);
+</script>
+</body>
+</html>
