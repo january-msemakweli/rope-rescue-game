@@ -15,9 +15,10 @@ A physics puzzle inspired by a mobile game ad: *only the left-brained can cut th
 
 ## Features
 
-- 5 hand-designed levels: direct drops, tiles tied to a gorilla, a 3-tile chain, gorilla-dangle rescues, and a combined finale
+- 8 hand-designed levels, each with **2–3 gorillas**: direct drops, a tile/gorilla sandwich tied together with ropes, a tile hanging *under* a gorilla, tangled chains tied sideways to gorillas, tiles that must dangle from gorillas to be lowered, a center tile hanging from two gorillas at once, and a combined finale
+- Stricter physics than it looks: the safe-fall threshold is tight, so a slash-everything play style frees a gorilla and loses on **every** level (verified by simulation)
 - Real rope physics: a small Verlet-integration engine (gravity, rope constraints that only pull, character collisions, impact-speed detection) written from scratch in vanilla JS
-- Every level **playtested by simulation**: scripted runs of the intended solutions win, wrong cuts (e.g. cutting a gorilla's rope) fail, and untouched levels hang perfectly still
+- Every level **playtested by simulation**: scripted runs of the intended solutions win, slash-all runs fail on all 8 levels, wrong cuts (e.g. cutting a gorilla's rope) fail, and untouched levels hang still
 - Swipe + tap cutting with a visible slash trail, worried/happy tile faces, IQ counter, hints, level select with progress in `localStorage`
 - Single self-contained `index.html` — no build step, no dependencies, works on mobile and desktop
 
